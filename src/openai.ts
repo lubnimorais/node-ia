@@ -2,11 +2,13 @@ import OpenAI from 'openai'
 
 import { z as zod } from 'zod'
 
-import { zodResponseFormat } from 'openai/helpers/zod'
+import { zodResponseFormat, zodTextFormat } from 'openai/helpers/zod'
 
 import { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources';
+import { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses.js';
 
 import { produtosEmEstoque, produtosEmFalta, setarEmbedding, todosProdutos } from './database';
+import { ReadStream } from 'fs';
 
 
 // CLIENT OPEN AI
@@ -148,3 +150,57 @@ export async function embedProducts() {
     setarEmbedding(index, embedding)
   }))
 }
+
+async function generateResponse(params: ResponseCreateParamsNonStreaming) {
+  const response = await client.responses.parse(params)
+
+  // QUANDO PARSEAMOS A RESPOSTA, UTILIZAMOS O response.output_parsed
+  if (response.output_parsed) {
+    return response.output_parsed
+  }
+
+  if (response.output_text) {
+    return response.output_text
+  }
+
+  return null
+}
+
+export async function generateCart(input: string, products: string[]) {
+  return generateResponse({
+    model: 'gpt-4.1-nano',
+    instructions: `Retorne uma lista de até 5 produtos que satisfaçam a necessidade do usuário. Os produtos disponíveis são os seguintes ${JSON.stringify(products)}`,
+    input,
+    text: {
+      format: zodTextFormat(schema, 'carrinho')
+    },
+    //UTILIZANDO O VECTOR STORE
+    tools: [
+      {
+        type: 'file_search',
+        vector_store_ids: ['fdsdsds']
+      }
+    ]
+  })
+}
+
+export async function uploadFile(file: ReadStream) {
+  const uploaded = await client.files.create({
+    file,
+    purpose: 'assistants'
+  })
+
+  console.dir(uploaded, { depth: null });
+}
+
+export async function createVector() {
+  const vectorStore = await client.vectorStores.create({
+    name: 'node_ia_file_search_class',
+    file_ids: ['ddsdsdsdds'],
+  })
+
+  console.dir(vectorStore, { depth: null });
+}
+
+// CONFIRMANDO SE FORAM CRIADOS A VECTOR STORE
+//  client.vectorStores.files.list('dskldksdksldklsd').then(res => console.dir(res.data, { depth: null }))
