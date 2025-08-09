@@ -1,0 +1,2 @@
+{"custom_id":0,"method":"POST","url":"/v1/embeddings","body":{"input":"sorvete","model":"text-embedding-3-small","encoding_format":"float"}}
+{"custom_id":1,"method":"POST","url":"/v1/embeddings","body":{"input":"alface","model":"text-embedding-3-small","encoding_format":"float"}}

@@ -1,24 +1,37 @@
-import OpenAI from 'openai'
+import dotenv from 'dotenv';
 
-import { z as zod } from 'zod'
+dotenv.config();
 
-import { zodResponseFormat, zodTextFormat } from 'openai/helpers/zod'
+import type { ReadStream } from 'fs';
 
-import { ChatCompletionMessageParam, ChatCompletionTool } from 'openai/resources';
-import { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses.js';
+import OpenAI from 'openai';
 
-import { produtosEmEstoque, produtosEmFalta, setarEmbedding, todosProdutos } from './database';
-import { ReadStream } from 'fs';
+import { zodResponseFormat, zodTextFormat } from 'openai/helpers/zod';
 
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionTool,
+} from 'openai/resources';
+
+import type { ResponseCreateParamsNonStreaming } from 'openai/resources/responses/responses.js';
+
+import { z as zod } from 'zod';
+
+import {
+  produtosEmEstoque,
+  produtosEmFalta,
+  setarEmbedding,
+  todosProdutos,
+} from './database';
 
 // CLIENT OPEN AI
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
+  apiKey: process.env.OPENAI_API_KEY,
 });
 
 const schema = zod.object({
-  produtos: zod.array(zod.string())
-})
+  produtos: zod.array(zod.string()),
+});
 
 const tools: ChatCompletionTool[] = [
   {
@@ -29,10 +42,10 @@ const tools: ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {},
-        additionalProperties: false
+        additionalProperties: false,
       },
-      strict: true // não pode mudar nada nesse esquema
-    }
+      strict: true, // não pode mudar nada nesse esquema
+    },
   },
   {
     type: 'function',
@@ -42,41 +55,44 @@ const tools: ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {},
-        additionalProperties: false
+        additionalProperties: false,
       },
-      strict: true // não pode mudar nada nesse esquema
-    }
-  }
-]
+      strict: true, // não pode mudar nada nesse esquema
+    },
+  },
+];
 
-const generateCompletion = async (messages: ChatCompletionMessageParam[], format: any) => {
+const generateCompletion = async (
+  messages: ChatCompletionMessageParam[],
+  format: any
+) => {
   const completion = await client.chat.completions.parse({
     model: 'gpt-4o-mini',
     max_completion_tokens: 100,
     response_format: format,
     tools,
-    messages
-  })
+    messages,
+  });
 
   if (completion.choices[0].message.refusal) {
-    throw new Error('Refusal')
+    throw new Error('Refusal');
   }
 
   const { tool_calls } = completion.choices[0].message;
 
   if (tool_calls) {
-    const [ tool_call ] = tool_calls
-    console.log(tool_call.function.name)
+    const [tool_call] = tool_calls;
+    console.log(tool_call.function.name);
 
     const toolsMap = {
       produtos_em_estoque: produtosEmEstoque,
-      produtos_em_falta: produtosEmFalta
-    }
+      produtos_em_falta: produtosEmFalta,
+    };
 
-    const functionToCall = toolsMap[tool_call.function.name]
+    const functionToCall = toolsMap[tool_call.function.name];
 
     if (!functionToCall) {
-      throw new Error('Function not found')
+      throw new Error('Function not found');
     }
 
     /**
@@ -84,41 +100,48 @@ const generateCompletion = async (messages: ChatCompletionMessageParam[], format
      * DESSA FORMA: tool_call.function.parsed_arguments
      */
 
-    const result = functionToCall(tool_call.function.parsed_arguments)
+    const result = functionToCall(tool_call.function.parsed_arguments);
 
-    messages.push(completion.choices[0].message)
+    messages.push(completion.choices[0].message);
 
     messages.push({
       role: 'tool',
       tool_call_id: tool_call.id,
-      content: result.toString()
-    })
+      content: result.toString(),
+    });
 
-    const completionWithToResult = await generateCompletion(messages, zodResponseFormat(schema, 'produtos_schema'))
+    const completionWithToResult = await generateCompletion(
+      messages,
+      zodResponseFormat(schema, 'produtos_schema')
+    );
 
     return completionWithToResult;
   }
 
-  return completion
-}
+  return completion;
+};
 
 export async function generateProducts(message: string) {
   const messages: ChatCompletionMessageParam[] = [
-      {
-        role: 'developer',
-        content: 'Liste no máximo três produtos que atendam a necessidade do usuário. Considere apenas os produtos em estoque'
-      },
-      {
-        role: 'user', // developer, assistant
-        content: message
-      },
-    ]
+    {
+      role: 'developer',
+      content:
+        'Liste no máximo três produtos que atendam a necessidade do usuário. Considere apenas os produtos em estoque',
+    },
+    {
+      role: 'user', // developer, assistant
+      content: message,
+    },
+  ];
 
-  const completion =  await generateCompletion(messages, zodResponseFormat(schema, 'produtos_schema'));
+  const completion = await generateCompletion(
+    messages,
+    zodResponseFormat(schema, 'produtos_schema')
+  );
 
-  const output = completion.choices[0].message.parsed
+  const output = completion.choices[0].message.parsed;
 
-  return output
+  return output;
 }
 
 export async function generateEmbedding(input: string) {
@@ -126,81 +149,134 @@ export async function generateEmbedding(input: string) {
     const response = await client.embeddings.create({
       input,
       model: 'text-embedding-3-small',
-      encoding_format: 'float'
-    })
-  
+      encoding_format: 'float',
+    });
+
     console.dir(response, { depth: null });
-  
-    return response.data[0].embedding ?? null
+
+    return response.data[0].embedding ?? null;
   } catch (err) {
-    return null
+    return null;
   }
 }
 
 export async function embedProducts() {
-  const produtos = todosProdutos()
+  const produtos = todosProdutos();
 
-  await Promise.allSettled(produtos.map(async (product, index) => {
-    const embedding = await generateEmbedding(`${product.nome}: ${product.descricao}`)
+  await Promise.allSettled(
+    produtos.map(async (product, index) => {
+      const embedding = await generateEmbedding(
+        `${product.nome}: ${product.descricao}`
+      );
 
-    if (!embedding) {
-      return;
-    }
+      if (!embedding) {
+        return;
+      }
 
-    setarEmbedding(index, embedding)
-  }))
+      setarEmbedding(index, embedding);
+    })
+  );
 }
 
+export const uploadFile = async (file: ReadStream) => {
+  const uploaded = await client.files.create({
+    file,
+    purpose: 'assistants',
+  });
+
+  console.dir(uploaded, { depth: null });
+};
+
+export const createVector = async () => {
+  const vectorStore = await client.vectorStores.create({
+    name: 'node_ia_file_search_class',
+
+    file_ids: ['file-2GMRzcyTDZp1HjxEx5pfd1'],
+  });
+
+  console.dir(vectorStore, { depth: null });
+};
+
 async function generateResponse(params: ResponseCreateParamsNonStreaming) {
-  const response = await client.responses.parse(params)
+  const response = await client.responses.parse(params);
 
   // QUANDO PARSEAMOS A RESPOSTA, UTILIZAMOS O response.output_parsed
   if (response.output_parsed) {
-    return response.output_parsed
+    return response.output_parsed;
   }
 
   if (response.output_text) {
-    return response.output_text
+    return response.output_text;
   }
 
-  return null
+  return null;
 }
 
-export async function generateCart(input: string, products: string[]) {
+export const generateCart = async (input: string, products: string[]) => {
   return generateResponse({
-    model: 'gpt-4.1-nano',
-    instructions: `Retorne uma lista de até 5 produtos que satisfaçam a necessidade do usuário. Os produtos disponíveis são os seguintes ${JSON.stringify(products)}`,
-    input,
-    text: {
-      format: zodTextFormat(schema, 'carrinho')
-    },
-    //UTILIZANDO O VECTOR STORE
-    tools: [
-      {
-        type: 'file_search',
-        vector_store_ids: ['fdsdsds']
-      }
-    ]
-  })
-}
+    model: 'gpt-4o-mini',
 
-export async function uploadFile(file: ReadStream) {
+    instructions: `Retorne uma lista de até 5 produtos que satisfação a necessidade do usuário. Os produtos disponíveis são os seguintes: ${JSON.stringify(products)}`,
+
+    input,
+
+    text: {
+      format: zodTextFormat(schema, 'carrinho'),
+    },
+  });
+};
+
+// CRIANDO O ARQUIVO DE BATCH
+export async function createEmbeddingBatchFile(products: string[]) {
+  const content = products
+    .map((product, index) => ({
+      custom_id: index.toString(), // id para identificar quando tiver os resultados de qual objeto
+      method: 'POST',
+      url: '/v1/embeddings', // endpoint
+      body: {
+        input: product,
+        model: 'text-embedding-3-small',
+        encoding_format: 'float', // padrão
+      },
+    }))
+    .map((product) => JSON.stringify(product))
+    .join('\n');
+
+  // TESTE
+  // await writeFile(path.join(__dirname, 'file.jsonl'), content);
+
+  // UPLOAD PARA OPENIA
+  const file = new File([content], 'embeddings-batch.jsonl');
   const uploaded = await client.files.create({
     file,
-    purpose: 'assistants'
-  })
+    purpose: 'batch',
+  });
 
-  console.dir(uploaded, { depth: null });
+  return uploaded;
 }
 
-export async function createVector() {
-  const vectorStore = await client.vectorStores.create({
-    name: 'node_ia_file_search_class',
-    file_ids: ['ddsdsdsdds'],
-  })
+// CRIANDO O BATCH E ENVIANDO
+export async function createEmbeddingBatch(fileId: string) {
+  const batch = await client.batches.create({
+    input_file_id: fileId,
+    endpoint: '/v1/embeddings',
+    completion_window: '24h',
+  });
 
-  console.dir(vectorStore, { depth: null });
+  return batch;
 }
 
-// CONFIRMANDO SE FORAM CRIADOS A VECTOR STORE
-//  client.vectorStores.files.list('dskldksdksldklsd').then(res => console.dir(res.data, { depth: null }))
+// TESTE
+// createEmbeddingBatchFile(['sorvete', 'alface']);
+
+// VERIFICAR PROCESSO DO BATCH
+export async function getBatch(id: string) {
+  return await client.batches.retrieve(id);
+}
+
+// OBTENDO ARQUIVO DE RESULTADO DO BATCH
+export async function getFileContent(outputFileId: string) {
+  const response = await client.files.content(outputFileId);
+
+  return await response.text();
+}
