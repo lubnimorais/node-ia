@@ -5,7 +5,7 @@ dotenv.config();
 import express from 'express';
 import { createReadStream, ReadStream } from 'fs';
 import path from 'path';
-import { produtosSimilares, todosProdutos } from './database';
+import { produtosSimilares, setarEmbedding, todosProdutos } from './database';
 import {
   createEmbeddingBatch,
   createEmbeddingBatchFile,
@@ -16,6 +16,7 @@ import {
   generateProducts,
   getBatch,
   getFileContent,
+  processEmbeddingsBatchResults,
   uploadFile,
 } from './openai';
 
@@ -103,27 +104,43 @@ app.post('/vector-store', async (request, response) => {
 });
 
 app.post('/embeddings-batch', async (request, response) => {
-  const file = await createEmbeddingBatchFile(['sorvete', 'alface']);
+  const file = await createEmbeddingBatchFile(
+    todosProdutos().map((p) => `${p.nome}: ${p.descricao}`)
+  );
 
+  /**
+   * NO BANCO DE DADOS REAL, SALVARIA ESSES BATCHS E O STATUS DELE
+   * E UMA ROTINA FICARIA FAZENDO A VERIFICAÇÃO
+   */
   const batch = await createEmbeddingBatch(file.id);
 
   response.status(201).json(batch);
 });
 
-app.get('/embeddings-batch/results', async (request, response) => {
-  const batch = await getBatch('batch_748347837287827428347823');
+app.get('/embeddings-batch/results/:id', async (request, response) => {
+  const id = request.params.id;
 
-  if (batch.status !== 'completed' || !batch.output_file_id) {
-    response.json(batch);
+  const results = await processEmbeddingsBatchResults(id);
+
+  if (!results) {
+    response.status(200).json({ message: 'Still processing' });
 
     return;
   }
 
-  console.log('TODO: process results', batch.output_file_id);
+  // SETANDO NO BANCO DE DADOS OS EMBEDDINGS
+  results.forEach(async (result) => {
+    await setarEmbedding(result.id, result.embeddings);
+  });
 
-  // OBTENDO O ARQUIVO
-  const file = await getFileContent(batch.output_file_id);
-  console.log(file);
+  response.status(200).end();
+});
 
-  response.status(200).json(batch);
+app.get('/products', async (request, response) => {
+  response.status(200).json(
+    todosProdutos().map((product) => ({
+      ...product,
+      embedding: product.embedding ? product.embedding.slice(0, 3) : null,
+    }))
+  );
 });

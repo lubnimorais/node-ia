@@ -197,33 +197,73 @@ export const createVector = async () => {
   console.dir(vectorStore, { depth: null });
 };
 
-async function generateResponse(params: ResponseCreateParamsNonStreaming) {
+async function generateResponse<T = null>(
+  params: ResponseCreateParamsNonStreaming
+) {
   const response = await client.responses.parse(params);
 
   // QUANDO PARSEAMOS A RESPOSTA, UTILIZAMOS O response.output_parsed
   if (response.output_parsed) {
-    return response.output_parsed;
+    return response.output_parsed as T;
   }
 
-  if (response.output_text) {
-    return response.output_text;
-  }
+  // if (response.output_text) {
+  //   return response.output_text;
+  // }
 
   return null;
 }
 
+// GERAR PROMPTS MENORES (CHUNKS)
+export function createCartPromptChunks(input: string, products: string[]) {
+  const chunkSize = 100;
+  // CADA CHUNK VAI SER UM PROMPT
+  const chunks: string[] = [];
+
+  for (let i = 0; i < chunkSize; i += chunkSize) {
+    chunks.push(
+      `Retorne uma lista de até 5 produtos que satisfação a necessidade do usuário. 
+      
+      Os produtos disponíveis são os seguintes: ${JSON.stringify(products.slice(i, i + chunkSize))}`
+    );
+  }
+
+  return chunks;
+}
+
 export const generateCart = async (input: string, products: string[]) => {
-  return generateResponse({
-    model: 'gpt-4o-mini',
-
-    instructions: `Retorne uma lista de até 5 produtos que satisfação a necessidade do usuário. Os produtos disponíveis são os seguintes: ${JSON.stringify(products)}`,
-
+  // PRIMEIRA ETAPA É SABER OS INGREDIENTES (OS COMPONENTES DA RECEITA)
+  const ingredientes = client.responses.create({
     input,
-
+    model: 'gpt-4.1-mini',
+    instructions: `Retorne uma lista de até 5 ingredientes que satisfação a necessidade do usuário. 
+      1. Divida o prato em componentes principais.
+      2. Para cada componente, forneça uma lista de ingredientes que podem ser usados para prepará-lo.`,
     text: {
-      format: zodTextFormat(schema, 'carrinho'),
+      format: zodTextFormat(
+        zod.object({ ingredientes: zod.array(zod.string()) }),
+        'receita'
+      ),
     },
   });
+
+  // FAZENDO O CHUNK DO PROMPT
+  const promises = createCartPromptChunks(input, products).map((chunk) => {
+    return generateResponse<{ produtos: string[] }>({
+      model: 'gpt-4.1-mini',
+      instructions: chunk,
+      input: `${input}: ingredientes necessários ${ingredientes}`,
+      text: {
+        format: zodTextFormat(schema, 'carrinho'),
+      },
+    });
+  });
+
+  const results = await Promise.all(promises);
+
+  return results
+    .filter((result): result is { produtos: string[] } => Boolean(result))
+    .flatMap((result) => result.produtos);
 };
 
 // CRIANDO O ARQUIVO DE BATCH
@@ -279,4 +319,42 @@ export async function getFileContent(outputFileId: string) {
   const response = await client.files.content(outputFileId);
 
   return await response.text();
+}
+
+// PROCESSANDO AS INFORMAÇÕES DO BATCH
+export async function processEmbeddingsBatchResults(batchId: string) {
+  const batch = await getBatch(batchId);
+
+  if (batch.status !== 'completed' || !batch.output_file_id) {
+    return null;
+  }
+
+  // OBTENDO O ARQUIVO
+  const fileContent = await getFileContent(batch.output_file_id);
+
+  // TRANSFORMAR O JSON LINE EM OBJETO JAVASCRIPT
+  return (
+    fileContent
+      .split('\n')
+      .map((line) => {
+        try {
+          const parsed = JSON.parse(line) as {
+            custom_id: string;
+            response: { body: { data: { embedding: number[] }[] } };
+          };
+
+          return {
+            id: Number(parsed.custom_id),
+            embeddings: parsed.response.body.data[0].embedding,
+          };
+        } catch (err) {
+          console.error(err);
+          return null;
+        }
+      })
+      // REMOVENDO OS VALORES NULOS
+      .filter((result): result is { id: number; embeddings: number[] } =>
+        Boolean(result)
+      )
+  );
 }
